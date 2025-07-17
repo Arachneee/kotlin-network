@@ -23,14 +23,31 @@ fun main() {
             val reader = socket.inputStream.bufferedReader()
             val writer = socket.getOutputStream().bufferedWriter()
 
-            // recv() : 커널 공간에서 데이터를 읽어 사용자 공간으로 전달
-            val message = reader.readLine()
-            println("클라이언트로부터 받은 메시지: $message")
+            println("클라이언트와 연결되었습니다. 메시지를 기다리는 중...")
+            
+            while (true) {
+                try {
+                    // recv() : 커널 공간에서 데이터를 읽어 사용자 공간으로 전달
+                    val message = reader.readLine()
+                    
+                    // 클라이언트가 연결을 끊었을 때 (null 반환)
+                    if (message == null) {
+                        println("클라이언트가 연결을 끊었습니다.")
+                        break
+                    }
+                    
+                    println("클라이언트로부터 받은 메시지: $message")
 
-            // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
-            writer.write("Echo: $message")
-            writer.newLine()
-            writer.flush()
+                    // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
+                    writer.write("Echo: $message")
+                    writer.newLine()
+                    writer.flush()
+                } catch (e: Exception) {
+                    println("클라이언트와의 연결에 오류가 발생했습니다: ${e.message}")
+                    break
+                }
+            }
+            println("클라이언트와의 연결이 종료되었습니다.")
         }
     }
     println("서버를 종료합니다.")

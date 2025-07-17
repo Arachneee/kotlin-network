@@ -12,21 +12,31 @@ fun main() {
      */
     Socket("127.0.0.1", 9999).use { socket ->
         println("서버에 연결되었습니다.")
+        println("메시지를 입력하세요. 종료하려면 'exit'을 입력하세요.")
 
         val writer = socket.getOutputStream().bufferedWriter()
         val reader = socket.getInputStream().bufferedReader()
 
-        val messageToSend = "Hello, Kotlin Socket!"
-        println("서버로 보낼 메시지: $messageToSend")
+        while (true) {
+            print("메시지 입력: ")
+            val messageToSend = readlnOrNull() ?: ""
 
-        // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
-        writer.write(messageToSend)
-        writer.newLine()
-        writer.flush()
+            if (messageToSend.equals("exit", ignoreCase = true)) {
+                println("클라이언트를 종료합니다.")
+                break
+            }
 
-        // recv() : 커널 공간에서 데이터를 읽어 사용자 공간으로 전달
-        val receivedMessage = reader.readLine()
-        println("서버로부터 받은 Echo: $receivedMessage")
+            println("서버로 보낼 메시지: $messageToSend")
+
+            // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
+            writer.write(messageToSend)
+            writer.newLine()
+            writer.flush()
+
+            // recv() : 커널 공간에서 데이터를 읽어 사용자 공간으로 전달
+            val receivedMessage = reader.readLine()
+            println("서버로부터 받은 Echo: $receivedMessage")
+            println() // 빈 줄 추가로 가독성 향상
+        }
     }
-    println("클라이언트를 종료합니다.")
 }
