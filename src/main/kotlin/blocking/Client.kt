@@ -2,6 +2,8 @@ package blocking
 
 import util.ThreadLogUtil.log
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 fun main() {
     log("클라이언트를 시작합니다...")
@@ -18,26 +20,48 @@ fun main() {
         val writer = socket.getOutputStream().bufferedWriter()
         val reader = socket.getInputStream().bufferedReader()
 
-        while (true) {
-            print("메시지 입력: ")
-            val messageToSend = readlnOrNull() ?: ""
+        val isRunning = AtomicBoolean(true)
 
-            if (messageToSend.equals("exit", ignoreCase = true)) {
-                log("클라이언트를 종료합니다.")
-                break
+        val receiveThread =
+            thread(name = "ReceiveThread") {
+                try {
+                    while (isRunning.get()) {
+                        val receivedMessage = reader.readLine()
+                        if (receivedMessage == null) {
+                            log("서버와의 연결이 끊어졌습니다.")
+                            break
+                        }
+                        log("서버 : $receivedMessage")
+                    }
+                } catch (e: Exception) {
+                    if (isRunning.get()) {
+                        log("메시지 수신 중 오류 발생: ${e.message}")
+                    }
+                }
             }
 
-            log("서버로 보낼 메시지: $messageToSend")
+        try {
+            while (isRunning.get()) {
+                print("메시지 입력: ")
+                val messageToSend = readlnOrNull() ?: ""
 
-            // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
-            writer.write(messageToSend)
-            writer.newLine()
-            writer.flush()
+                if (messageToSend.equals("exit", ignoreCase = true)) {
+                    log("클라이언트를 종료합니다.")
+                    isRunning.set(false)
+                    break
+                }
 
-            // recv() : 커널 공간에서 데이터를 읽어 사용자 공간으로 전달
-            val receivedMessage = reader.readLine()
-            log("서버로부터 받은 Echo: $receivedMessage")
-            println() // 빈 줄 추가로 가독성 향상
+                // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
+                writer.write(messageToSend)
+                writer.newLine()
+                writer.flush()
+            }
+        } catch (e: Exception) {
+            log("메시지 송신 중 오류 발생: ${e.message}")
+        } finally {
+            isRunning.set(false)
+            receiveThread.interrupt()
+            receiveThread.join(1000) // 1초 대기
         }
     }
 }
