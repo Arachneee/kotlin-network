@@ -10,6 +10,15 @@ object ThreadLogUtil {
         println("[$threadName] $message")
     }
 
+    fun log(
+        message: String,
+        throwable: Throwable,
+    ) {
+        val threadName = Thread.currentThread().name
+        println("[$threadName] $message")
+        throwable.printStackTrace()
+    }
+
     fun logThreadInfo() {
         val thread = Thread.currentThread()
         println("=== 스레드 정보 ===")
@@ -21,5 +30,3 @@ object ThreadLogUtil {
         println("================")
     }
 }
-
-
