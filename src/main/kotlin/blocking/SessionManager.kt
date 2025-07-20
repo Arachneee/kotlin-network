@@ -23,7 +23,7 @@ class SessionManager {
     private fun connectClient(clientSession: ClientSession) {
         val sessionId = clientSession.id
 
-        while (!Thread.currentThread().isInterrupted && clientSession.isConnected()) {
+        while (!Thread.currentThread().isInterrupted) {
             try {
                 val message = clientSession.reader.readLine() ?: break
 

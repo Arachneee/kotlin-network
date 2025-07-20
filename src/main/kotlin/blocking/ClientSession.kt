@@ -33,8 +33,6 @@ class ClientSession(
         }
     }
 
-    fun isConnected(): Boolean = !socket.isClosed && socket.isConnected && !socket.isInputShutdown && !socket.isOutputShutdown
-
     companion object {
         fun create(
             sessionId: Long,
