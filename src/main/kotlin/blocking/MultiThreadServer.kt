@@ -2,24 +2,47 @@ package blocking
 
 import util.ThreadLogUtil.log
 import java.net.ServerSocket
-import kotlin.concurrent.thread // 코틀린의 스레드 생성 함수 import
+import java.net.SocketException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 fun main() {
+    val threadPool = Executors.newFixedThreadPool(2)
     val sessionManager = SessionManager()
-    val serverSocket = ServerSocket(9999)
-    log("멀티스레드 에코 서버를 시작합니다...")
+    ServerSocket(9999).use { serverSocket ->
+        log("멀티스레드 서버를 시작합니다...")
 
-    while (true) {
-        val clientSocket = serverSocket.accept()
-        log("클라이언트 접속: ${clientSocket.inetAddress}")
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                log("서버를 종료합니다...")
+                serverSocket.close()
+                sessionManager.shutdown()
 
-        thread {
+                threadPool.shutdown()
+                try {
+                    if (!threadPool.awaitTermination(3, TimeUnit.SECONDS)) {
+                        log("스레드풀이 정상 종료되지 않아 강제 종료합니다.")
+                        threadPool.shutdownNow()
+                    }
+                } catch (e: InterruptedException) {
+                    threadPool.shutdownNow()
+                }
+
+                log("서버가 종료되었습니다.")
+            },
+        )
+
+        while (!Thread.currentThread().isInterrupted) {
             try {
-                sessionManager.addClient(clientSocket)
-            } catch (e: Exception) {
-                log("클라이언트(${clientSocket.inetAddress})와 연결 중 예외 발생: ${e.message}")
-            } finally {
-                log("클라이언트(${clientSocket.inetAddress}) 연결 종료")
+                val clientSocket = serverSocket.accept()
+                log("클라이언트 접속: ${clientSocket.inetAddress}")
+
+                threadPool.execute {
+                    sessionManager.addClient(clientSocket)
+                }
+            } catch (e: SocketException) {
+                if (!serverSocket.isClosed) throw e
+                break
             }
         }
     }
