@@ -1,4 +1,4 @@
-package blocking
+package server.blocking
 
 import util.ThreadLogUtil.log
 import java.net.Socket
