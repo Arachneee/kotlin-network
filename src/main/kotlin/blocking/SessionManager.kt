@@ -2,11 +2,12 @@ package blocking
 
 import util.ThreadLogUtil.log
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 class SessionManager {
     private val sessionIdCounter = AtomicLong(0)
-    private val sessions = mutableMapOf<Long, ClientSession>()
+    private val sessions = ConcurrentHashMap<Long, ClientSession>()
 
     fun addClient(clientSocket: Socket): Long {
         val sessionId = sessionIdCounter.incrementAndGet()
