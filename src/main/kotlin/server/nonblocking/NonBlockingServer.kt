@@ -36,6 +36,7 @@ fun main() {
                 when {
                     key.isAcceptable -> handleAccept(key, selector, sessionChannelManager)
                     key.isReadable -> handleRead(key, sessionChannelManager)
+                    key.isWritable -> handleWrite(key, sessionChannelManager)
                 }
             }
         }
@@ -71,5 +72,17 @@ private fun handleRead(
     } catch (e: IOException) {
         key.cancel() // 시스템 콜: epoll_ctl, kqueue - selector에서 등록 해제
         log("클라이언트 연결이 비정상적으로 종료되었습니다.", e)
+    }
+}
+
+private fun handleWrite(
+    key: SelectionKey,
+    sessionChannelManager: SessionChannelManager,
+) {
+    try {
+        sessionChannelManager.handlePendingWrites(key)
+    } catch (e: IOException) {
+        key.cancel() // 시스템 콜: epoll_ctl, kqueue - selector에서 등록 해제
+        log("쓰기 처리 중 오류가 발생했습니다.", e)
     }
 }

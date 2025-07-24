@@ -4,9 +4,18 @@ import util.ThreadLogUtil.log
 import java.nio.ByteBuffer
 import java.nio.channels.SelectionKey
 import java.nio.channels.SocketChannel
+import java.util.concurrent.ConcurrentHashMap
+
+data class PendingWrite(
+    val channel: SocketChannel,
+    val buffer: ByteBuffer,
+    val key: SelectionKey,
+)
 
 class SessionChannelManager {
-    private val clients = mutableMapOf<SocketChannel, ByteBuffer>()
+    private val clients = ConcurrentHashMap<SocketChannel, ByteBuffer>()
+    private val partialMessages = ConcurrentHashMap<SocketChannel, StringBuilder>()
+    private val pendingWrites = mutableListOf<PendingWrite>()
 
     fun addClient(clientChannel: SocketChannel) {
         clients[clientChannel] = ByteBuffer.allocate(1024)
@@ -15,44 +24,160 @@ class SessionChannelManager {
     fun broadcastMessage(key: SelectionKey) {
         val senderChannel = key.channel() as SocketChannel
         val senderBuffer = clients[senderChannel] ?: return
-        val bytesRead = senderChannel.read(senderBuffer)
 
-        if (bytesRead == -1) {
-            clients.remove(senderChannel)
-            senderChannel.close() // 시스템 콜: close() - 소켓 닫기
-            key.cancel()
-            log("클라이언트 연결이 종료되었습니다.")
+        // 완전한 메시지를 읽을 때까지 대기
+        val message = readCompleteMessage(senderChannel, senderBuffer)
+
+        when {
+            message == null -> {
+                // 연결이 종료됨
+                removeClient(senderChannel, key)
+                log("클라이언트 연결이 종료되었습니다.")
+                return
+            }
+            message.isBlank() -> return // 빈 메시지는 무시
+        }
+
+        log("받은 완전한 메시지: $message")
+
+        // 모든 클라이언트에게 브로드캐스트 (발신자 제외)
+        val broadcastMessage = "$senderChannel : $message\n"
+        val messageBytes = broadcastMessage.toByteArray(Charsets.UTF_8)
+
+        clients.keys
+            .filter { it != senderChannel }
+            .forEach { clientChannel ->
+                if (!safeWrite(clientChannel, messageBytes, key)) {
+                    log("클라이언트 ${clientChannel.remoteAddress}에게 즉시 전송 실패 - 대기열에 추가됨")
+                }
+            }
+    }
+
+    fun readCompleteMessage(
+        channel: SocketChannel,
+        buffer: ByteBuffer,
+    ): String? {
+        val bytesRead = channel.read(buffer)
+
+        if (bytesRead == -1) return null // 연결 종료
+        if (bytesRead == 0) return "" // 더 이상 읽을 데이터 없음
+
+        buffer.flip()
+        val newData = Charsets.UTF_8.decode(buffer).toString()
+        buffer.clear()
+
+        // 이전에 부분적으로 읽은 데이터와 합치기
+        val partialMessage = partialMessages.getOrPut(channel) { StringBuilder() }
+        partialMessage.append(newData)
+
+        // 메시지 끝을 나타내는 구분자 확인 (예: 줄바꿈)
+        val message = partialMessage.toString()
+        val lineEndIndex = message.indexOf('\n')
+
+        return if (lineEndIndex != -1) {
+            // 완전한 메시지를 찾음
+            val completeMessage = message.substring(0, lineEndIndex)
+
+            // 남은 데이터 처리
+            val remaining = message.substring(lineEndIndex + 1)
+            if (remaining.isEmpty()) {
+                partialMessages.remove(channel)
+            } else {
+                partialMessage.clear().append(remaining)
+            }
+
+            completeMessage
         } else {
-            senderBuffer.flip() // 버퍼를 '읽기 모드'로 전환
-            val received = Charsets.UTF_8.decode(senderBuffer).toString()
-            log("받은 메시지: $received")
+            // 아직 완전한 메시지가 아님 - 더 기다려야 함
+            null
+        }
+    }
 
-            // 모든 클라이언트에게 브로드캐스트 (발신자 제외)
-            val messageBytes = "$senderChannel : $received".toByteArray(Charsets.UTF_8)
+    fun safeWrite(
+        channel: SocketChannel,
+        data: ByteArray,
+        key: SelectionKey,
+    ): Boolean {
+        val buffer = ByteBuffer.wrap(data)
 
-            clients
-                .filter { it.key != senderChannel } // 발신자 제외
-                .forEach { clientChannel, clientBuffer ->
+        return try {
+            while (buffer.hasRemaining()) {
+                val bytesWritten = channel.write(buffer)
+
+                if (bytesWritten == 0) {
+                    // 소켓 버퍼가 가득 찬 상태 - 나중에 처리하기 위해 저장
+                    synchronized(pendingWrites) {
+                        pendingWrites.add(PendingWrite(channel, buffer, key))
+                    }
+
+                    // WRITE 이벤트에 관심 등록
+                    key.interestOps(key.interestOps() or SelectionKey.OP_WRITE)
+                    return false // 완전히 쓰지 못함
+                }
+            }
+            true // 모든 데이터 전송 완료
+        } catch (e: Exception) {
+            log("쓰기 중 오류 발생: ${e.message}")
+            removeClient(channel, key)
+            false
+        }
+    }
+
+    // Selector에서 WRITE 이벤트가 발생했을 때 호출
+    fun handlePendingWrites(key: SelectionKey) {
+        val channel = key.channel() as SocketChannel
+
+        synchronized(pendingWrites) {
+            val iterator = pendingWrites.iterator()
+
+            while (iterator.hasNext()) {
+                val pendingWrite = iterator.next()
+                if (pendingWrite.channel == channel) {
+                    val buffer = pendingWrite.buffer
+
                     try {
-                        clientBuffer.clear()
-                        clientBuffer.put(messageBytes)
-                        clientBuffer.flip() // 쓰기 모드로 전환
+                        while (buffer.hasRemaining()) {
+                            val bytesWritten = channel.write(buffer)
+                            if (bytesWritten == 0) {
+                                // 여전히 쓸 수 없음 - 다음 WRITE 이벤트를 기다림
+                                return
+                            }
+                        }
 
-                        while (clientBuffer.hasRemaining()) {
-                            clientChannel.write(clientBuffer)
-                        }
+                        // 모든 데이터 전송 완료
+                        iterator.remove()
                     } catch (e: Exception) {
-                        log("브로드캐스트 중 오류 발생: ${e.message}")
-                        clients.remove(clientChannel)
-                        try {
-                            clientChannel.close()
-                        } catch (closeException: Exception) {
-                        }
+                        log("pending write 처리 중 오류: ${e.message}")
+                        iterator.remove()
+                        removeClient(channel, key)
+                        return
                     }
                 }
+            }
 
-            // 원본 버퍼 정리
-            senderBuffer.clear()
+            // 더 이상 해당 채널의 pending write가 없으면 WRITE 이벤트 제거
+            if (pendingWrites.none { it.channel == channel }) {
+                key.interestOps(key.interestOps() and SelectionKey.OP_WRITE.inv())
+            }
         }
+    }
+
+    fun removeClient(
+        clientChannel: SocketChannel,
+        key: SelectionKey? = null,
+    ) {
+        clients.remove(clientChannel)
+        partialMessages.remove(clientChannel)
+
+        // pending writes에서도 제거
+        pendingWrites.removeAll { it.channel == clientChannel }
+
+        try {
+            clientChannel.close()
+        } catch (e: Exception) {
+            log("클라이언트 채널 닫기 실패: ${e.message}")
+        }
+
+        key?.cancel()
     }
 }
