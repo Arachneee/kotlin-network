@@ -1,5 +1,6 @@
 package server.nonblocking
 
+import util.ThreadLogUtil.log
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
@@ -18,7 +19,7 @@ fun main() {
     val selectionKey =
         serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT) // 시스템 콜: epoll_ctl, kqueue - selector에 채널 등록
 
-    println("NIO 서버가 시작되었습니다. 연결을 기다립니다...")
+    log("NIO 서버가 시작되었습니다. 연결을 기다립니다...")
 
     while (true) {
         // 1. 이벤트가 발생할 때까지 대기
@@ -41,7 +42,7 @@ fun main() {
                     selector,
                     SelectionKey.OP_READ,
                 ) // 시스템 콜: epoll_ctl, kqueue - 클라이언트 채널을 selector에 등록
-                println("새 클라이언트가 연결되었습니다: ${clientChannel.remoteAddress}")
+                log("새 클라이언트가 연결되었습니다: ${clientChannel.remoteAddress}")
 
                 // 2. '데이터 읽기' 이벤트 처리
             } else if (key.isReadable) {
@@ -55,11 +56,11 @@ fun main() {
                     if (bytesRead == -1) {
                         key.cancel() // 시스템 콜: epoll_ctl, kqueue - selector에서 등록 해제
                         clientChannel.close() // 시스템 콜: close() - 소켓 닫기
-                        println("클라이언트 연결이 종료되었습니다.")
+                        log("클라이언트 연결이 종료되었습니다.")
                     } else {
                         buffer.flip() // 버퍼를 '읽기 모드'로 전환
                         val received = Charsets.UTF_8.decode(buffer).toString()
-                        println("받은 메시지: $received")
+                        log("받은 메시지: $received")
 
                         buffer.flip()
                         clientChannel.write(buffer) // 시스템 콜: write() - 소켓에 데이터 쓰기
@@ -67,7 +68,7 @@ fun main() {
                 } catch (e: IOException) {
                     key.cancel() // 시스템 콜: epoll_ctl, kqueue - selector에서 등록 해제
                     clientChannel.close() // 시스템 콜: close() - 소켓 닫기
-                    println("클라이언트 연결이 비정상적으로 종료되었습니다.")
+                    log("클라이언트 연결이 비정상적으로 종료되었습니다.", e)
                 }
             }
 
