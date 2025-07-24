@@ -6,6 +6,17 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.SocketChannel
 import java.util.concurrent.ConcurrentHashMap
 
+// 메시지 읽기 결과를 명확하게 구분하기 위한 sealed class
+sealed class ReadResult {
+    object ConnectionClosed : ReadResult() // 연결 종료
+
+    object Incomplete : ReadResult() // 아직 완전한 메시지가 아님
+
+    data class Complete(
+        val message: String,
+    ) : ReadResult() // 완전한 메시지 수신
+}
+
 data class PendingWrite(
     val channel: SocketChannel,
     val buffer: ByteBuffer,
@@ -28,43 +39,45 @@ class SessionChannelManager {
         // 완전한 메시지를 읽을 때까지 대기
         val message = readCompleteMessage(senderChannel, senderBuffer)
 
-        when {
-            message == null -> {
+        when (message) {
+            is ReadResult.ConnectionClosed -> {
                 // 연결이 종료됨
                 removeClient(senderChannel, key)
                 log("클라이언트 연결이 종료되었습니다.")
                 return
             }
-            message.isBlank() -> return // 빈 메시지는 무시
-        }
+            is ReadResult.Incomplete -> return
+            is ReadResult.Complete -> {
+                log("받은 완전한 메시지: ${message.message}")
 
-        log("받은 완전한 메시지: $message")
+                // 모든 클라이언트에게 브로드캐스트 (발신자 제외)
+                val broadcastMessage = "$senderChannel : ${message.message}\n"
+                val messageBytes = broadcastMessage.toByteArray(Charsets.UTF_8)
 
-        // 모든 클라이언트에게 브로드캐스트 (발신자 제외)
-        val broadcastMessage = "$senderChannel : $message\n"
-        val messageBytes = broadcastMessage.toByteArray(Charsets.UTF_8)
-
-        clients.keys
-            .filter { it != senderChannel }
-            .forEach { clientChannel ->
-                if (!safeWrite(clientChannel, messageBytes, key)) {
-                    log("클라이언트 ${clientChannel.remoteAddress}에게 즉시 전송 실패 - 대기열에 추가됨")
-                }
+                clients.keys
+                    .filter { it != senderChannel }
+                    .forEach { clientChannel ->
+                        if (!safeWrite(clientChannel, messageBytes, key)) {
+                            log("클라이언트 ${clientChannel.remoteAddress}에게 즉시 전송 실패 - 대기열에 추가됨")
+                        }
+                    }
             }
+        }
     }
 
     fun readCompleteMessage(
         channel: SocketChannel,
         buffer: ByteBuffer,
-    ): String? {
+    ): ReadResult {
         val bytesRead = channel.read(buffer)
 
-        if (bytesRead == -1) return null // 연결 종료
-        if (bytesRead == 0) return "" // 더 이상 읽을 데이터 없음
+        if (bytesRead == -1) return ReadResult.ConnectionClosed
+        if (bytesRead == 0) return ReadResult.Incomplete
 
         buffer.flip()
         val newData = Charsets.UTF_8.decode(buffer).toString()
         buffer.clear()
+        log("새로운 데이터 읽음 : $newData")
 
         // 이전에 부분적으로 읽은 데이터와 합치기
         val partialMessage = partialMessages.getOrPut(channel) { StringBuilder() }
@@ -86,10 +99,10 @@ class SessionChannelManager {
                 partialMessage.clear().append(remaining)
             }
 
-            completeMessage
+            ReadResult.Complete(completeMessage)
         } else {
             // 아직 완전한 메시지가 아님 - 더 기다려야 함
-            null
+            ReadResult.Incomplete
         }
     }
 

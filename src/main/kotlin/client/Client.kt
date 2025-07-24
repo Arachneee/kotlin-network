@@ -7,6 +7,8 @@ import kotlin.concurrent.thread
 
 fun main() {
     log("클라이언트를 시작합니다...")
+    print("메시지 입력: ")
+    val messageToSend = readlnOrNull() ?: ""
 
     /* 시스템 콜 흐름
      * socket() : 파일 디스크립터 생성 요청
@@ -42,22 +44,15 @@ fun main() {
 
         try {
             while (isRunning.get()) {
-                print("메시지 입력: ")
-                val messageToSend = readlnOrNull() ?: ""
-
-                if (messageToSend.equals("exit", ignoreCase = true)) {
-                    log("클라이언트를 종료합니다.")
-                    isRunning.set(false)
-                    break
-                }
-
                 // send() : 사용자 공간에서 커널 공간으로 데이터를 전송
-                writer.write(messageToSend)
-                writer.newLine()
-                writer.flush()
+                "$messageToSend\n".forEach { char ->
+                    writer.write(char.toString())
+                    writer.flush()
+                    Thread.sleep(500)
+                }
             }
         } catch (e: Exception) {
-            log("메시지 송신 중 오류 발생: ${e.message}")
+            log("메시지 송신 중 오류 발생: ${e.message}", e)
         } finally {
             isRunning.set(false)
             receiveThread.interrupt()
