@@ -10,7 +10,10 @@ repositories {
 }
 
 dependencies {
+    implementation("io.netty:netty-all:4.1.117.Final")
+    implementation("org.yaml:snakeyaml:2.2")
     testImplementation(kotlin("test"))
+    testImplementation("org.assertj:assertj-core:3.26.3")
 }
 
 tasks.test {
