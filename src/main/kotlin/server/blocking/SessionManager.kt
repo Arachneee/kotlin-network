@@ -1,12 +1,15 @@
 package server.blocking
 
+import server.MessageHandler
 import util.ThreadLogUtil.log
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-class SessionManager {
+class SessionManager(
+    private val messageHandler: MessageHandler,
+) {
     private val sessionIdCounter = AtomicLong(0)
     private val sessions = ConcurrentHashMap<Long, ClientSession>()
     private val isShuttingDown = AtomicBoolean(false)
@@ -22,13 +25,16 @@ class SessionManager {
 
     private fun connectClient(clientSession: ClientSession) {
         val sessionId = clientSession.id
+        val context = BlockingClientContext(clientSession, this)
+
+        messageHandler.onClientConnected(context)
 
         while (!Thread.currentThread().isInterrupted) {
             try {
                 val message = clientSession.reader.readLine() ?: break
 
                 log("$sessionId 클라이언트로부터 받은 메시지: $message")
-                broadcastMessage(sessionId, message)
+                messageHandler.onMessageReceived(context, message)
             } catch (e: Exception) {
                 if (isShuttingDown.get()) {
                     log("$sessionId 서버 종료로 인한 연결 종료")
@@ -38,20 +44,32 @@ class SessionManager {
                 break
             }
         }
-        log("클라이언트와의 연결이 종료되었습니다.")
+
+        messageHandler.onClientDisconnected(context)
         sessions.remove(sessionId)
         clientSession.close()
+        log("클라이언트와의 연결이 종료되었습니다.")
     }
 
-    private fun broadcastMessage(
-        sessionId: Long,
+    fun broadcast(message: String) {
+        sessions.values.forEach { session ->
+            try {
+                session.sendMessage(message)
+            } catch (e: Exception) {
+                log("메시지 전송 중 오류 발생: ${e.message}", e)
+            }
+        }
+    }
+
+    fun broadcastExcluding(
+        excludeSessionId: Long,
         message: String,
     ) {
         sessions.values
-            .filter { it.id != sessionId }
+            .filter { it.id != excludeSessionId }
             .forEach { session ->
                 try {
-                    session.sendMessage("$sessionId: $message")
+                    session.sendMessage(message)
                 } catch (e: Exception) {
                     log("메시지 전송 중 오류 발생: ${e.message}", e)
                 }

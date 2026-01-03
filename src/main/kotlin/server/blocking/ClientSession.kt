@@ -10,6 +10,7 @@ class ClientSession(
     val reader: BufferedReader,
     val socket: Socket,
 ) {
+    @Synchronized
     fun sendMessage(message: String) {
         writer.write(message)
         writer.newLine()
