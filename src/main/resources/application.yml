@@ -1,5 +1,5 @@
 server:
   port: 9999
-  type: blocking  # netty 또는 nio 또는 blocking
+  type: netty  # netty 또는 nio 또는 blocking
   handler: chat  # chat 또는 echo
 
